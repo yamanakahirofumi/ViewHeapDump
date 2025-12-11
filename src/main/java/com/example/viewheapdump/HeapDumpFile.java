@@ -16,6 +16,9 @@ public class HeapDumpFile {
     private final File heapDumpFile;
     private int identifierSize;
     private final Map<Long, String> utf8Strings = new HashMap<>();
+    private final Map<Long, Frame> frames = new HashMap<>();
+
+    public record Frame(long stackFrameId, long methodNameId, long methodSignatureId, long sourceFileNameId, int classSerialNumber, int lineNumber) {}
 
     public HeapDumpFile(File heapDumpFile) {
         this.heapDumpFile = heapDumpFile;
@@ -78,6 +81,34 @@ public class HeapDumpFile {
                 int stackTraceSerialNumber = in.readInt();
                 long classNameId = readId(in);
                 System.out.println("HPROF_LOAD_CLASS: " + classSerialNumber + ", " + classObjectId + ", " + stackTraceSerialNumber + ", " + this.utf8Strings.get(classNameId));
+                break;
+            }
+            case 0x04: { // HPROF_FRAME
+                long stackFrameId = readId(in);
+                long methodNameId = readId(in);
+                long methodSignatureId = readId(in);
+                long sourceFileNameId = readId(in);
+                int classSerialNumber = in.readInt();
+                int lineNumber = in.readInt();
+                Frame frame = new Frame(stackFrameId, methodNameId, methodSignatureId, sourceFileNameId, classSerialNumber, lineNumber);
+                frames.put(stackFrameId, frame);
+                System.out.println("HPROF_FRAME: " + frame);
+                break;
+            }
+            case 0x05: { // HPROF_TRACE
+                int stackTraceSerialNumber = in.readInt();
+                int threadSerialNumber = in.readInt();
+                int numberOfFrames = in.readInt();
+                System.out.println("HPROF_TRACE: " + stackTraceSerialNumber + ", " + threadSerialNumber + ", " + numberOfFrames);
+                for (int i = 0; i < numberOfFrames; i++) {
+                    long frameId = readId(in);
+                    Frame frame = frames.get(frameId);
+                    if (frame != null) {
+                        System.out.println("  " + utf8Strings.get(frame.methodNameId()) + utf8Strings.get(frame.methodSignatureId()) + " (" + utf8Strings.get(frame.sourceFileNameId()) + ":" + frame.lineNumber() + ")");
+                    } else {
+                        System.out.println("  Unknown frame: " + frameId);
+                    }
+                }
                 break;
             }
             case 0x0C: // HPROF_HEAP_DUMP
