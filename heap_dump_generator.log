@@ -1,0 +1,7 @@
+> Task :app:compileJava
+> Task :app:processResources NO-SOURCE
+> Task :app:classes
+
+> Task :app:run
+HeapDumpGenerator started. PID: 4167
+Objects created. Waiting indefinitely...
