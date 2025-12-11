@@ -4,12 +4,23 @@ import java.io.BufferedInputStream;
 import java.io.DataInputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 
-public record HeapDumpFile(File heapDumpFile) {
+public class HeapDumpFile {
+    private final File heapDumpFile;
+    private int identifierSize;
+    private final Map<Long, String> utf8Strings = new HashMap<>();
+
+    public HeapDumpFile(File heapDumpFile) {
+        this.heapDumpFile = heapDumpFile;
+    }
+
     public int view() {
         System.out.println("Viewing heap dump file: " + heapDumpFile.getAbsolutePath());
         int size = this.viewHeader();
@@ -32,13 +43,62 @@ public record HeapDumpFile(File heapDumpFile) {
 
     private void viewRecord(DataInputStream in, int number) throws IOException {
         byte tag = in.readByte();
-        int i = in.readInt();
-        int length = in.readInt();
-        in.skip(length);
+        int time_offset_micro = in.readInt();
+        long length = Integer.toUnsignedLong(in.readInt());
+
         System.out.println("number: " + number);
-        System.out.println("tag: " + tag);
-        System.out.println("timestamp: " + i);
+        System.out.printf("tag: %d (0x%02X)\n", tag, tag);
+        System.out.println("time_offset_micro: " + time_offset_micro);
         System.out.println("length: " + length);
+
+        switch (tag) {
+            case 0x01: { // HPROF_UTF8
+                if (length < identifierSize) {
+                    System.out.println("Invalid length for HPROF_UTF8 record, skipping.");
+                    if (length > 0) in.skip(length);
+                    break;
+                }
+                long id = readId(in);
+                long bytesToRead = length - identifierSize;
+                if (bytesToRead > 1_000_000) { // sanity limit
+                    System.out.println("HPROF_UTF8 record too large to process, skipping.");
+                    in.skip(bytesToRead);
+                    break;
+                }
+                byte[] bytes = new byte[(int) bytesToRead];
+                in.readFully(bytes);
+                String s = new String(bytes, StandardCharsets.UTF_8);
+                System.out.println("HPROF_UTF8: " + s);
+                this.utf8Strings.put(id, s);
+                break;
+            }
+            case 0x02: { // HPROF_LOAD_CLASS
+                int classSerialNumber = in.readInt();
+                long classObjectId = readId(in);
+                int stackTraceSerialNumber = in.readInt();
+                long classNameId = readId(in);
+                System.out.println("HPROF_LOAD_CLASS: " + classSerialNumber + ", " + classObjectId + ", " + stackTraceSerialNumber + ", " + this.utf8Strings.get(classNameId));
+                break;
+            }
+            case 0x0C: // HPROF_HEAP_DUMP
+            case 0x1C: { // HPROF_HEAP_DUMP_SEGMENT
+                System.out.println("HPROF_HEAP_DUMP or HPROF_HEAP_DUMP_SEGMENT");
+                in.skip(length);
+                break;
+            }
+            default:
+                in.skip(length);
+                System.out.println("Skipping record with tag: " + tag);
+        }
+        System.out.println("--------------------");
+    }
+
+    private long readId(DataInputStream in) throws IOException {
+        if (identifierSize == 4) {
+            return Integer.toUnsignedLong(in.readInt());
+        } else {
+            return in.readLong();
+        }
     }
 
     private int viewHeader() {
@@ -55,7 +115,7 @@ public record HeapDumpFile(File heapDumpFile) {
             }
             String formatString = sb.toString();
 
-            int identifierSize = in.readInt(); // big-endian by default
+            this.identifierSize = in.readInt(); // big-endian by default
             long timestamp = in.readLong();
             number = number + 12;
 
@@ -64,12 +124,12 @@ public record HeapDumpFile(File heapDumpFile) {
                     .format(Instant.ofEpochMilli(timestamp));
 
             System.out.println("formatString: " + formatString);
-            System.out.println("identifierSize: " + identifierSize);
+            System.out.println("identifierSize: " + this.identifierSize);
             System.out.println("timestamp: " + timestamp);
             System.out.println("timestampIso: " + timestampIso);
         } catch (IOException e) {
             throw new RuntimeException(e);
-        }finally {
+        } finally {
             return number;
         }
     }
